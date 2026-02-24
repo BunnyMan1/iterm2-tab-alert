@@ -96,6 +96,37 @@ You have an old RPC-based trigger. Re-run `install.sh` to fix it, then restart i
 
 The LaunchAgent sets `PYTHONUNBUFFERED=1`. If you modified the plist manually, ensure that environment variable is present.
 
+## Docker / Remote Containers
+
+The BEL character propagates through Docker's PTY to iTerm2, so the trigger works for processes running inside containers. However, if you use **Claude Code hooks** (or similar notification hooks) inside a container, the hook subprocess may not have a controlling terminal — `printf '\a' > /dev/tty` will fail silently.
+
+**Fix:** Write BEL to all PTYs in the container:
+
+```bash
+for p in /dev/pts/[0-9]*; do printf '\a' > "$p" 2>/dev/null; done
+```
+
+This is necessary because:
+- Hook subprocesses have no controlling terminal (`/dev/tty` doesn't exist)
+- PID 1's PTY (`/dev/pts/0`) is from `docker run`, not the `docker exec -it` session running your CLI tool
+- Writing BEL to all PTYs is harmless — it just rings the bell on each
+
+Example Claude Code notification hook command for a container:
+
+```json
+{
+  "hooks": {
+    "Notification": [{
+      "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
+      "hooks": [{
+        "type": "command",
+        "command": "for p in /dev/pts/[0-9]*; do printf '\\a' > \"$p\" 2>/dev/null; done"
+      }]
+    }]
+  }
+}
+```
+
 ## How it's built
 
 - **Trigger detection:** iTerm2's built-in trigger system with `iTermInjectTrigger` action. Injects [proprietary escape codes](https://iterm2.com/documentation-escape-codes.html) to set tab color.
