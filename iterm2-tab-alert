@@ -1,0 +1,4 @@
+#!/bin/bash
+# This file is a template. install.sh generates the actual wrapper
+# with resolved paths at ~/.config/iterm2-tab-alert/iterm2-tab-alert
+exec uv run --script "$(dirname "$0")/reset_on_focus.py"
