@@ -17,7 +17,19 @@ Requires: iTerm2 Python API enabled (Settings > General > Magic > Enable Python 
 """
 
 import asyncio
+import logging
+from pathlib import Path
+
 import iterm2
+
+LOG_PATH = Path.home() / ".config" / "iterm2-tab-alert" / "daemon.log"
+logging.basicConfig(
+    filename=str(LOG_PATH),
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger(__name__)
 
 RESET_ESCAPE = b"\x1b]6;1;bg;*;default\x07"
 
@@ -31,37 +43,37 @@ async def reset_tab_color(tab):
 
 
 async def main(connection):
-    print("Connected to iTerm2 API")
+    log.info("Connected to iTerm2 API")
+
+    periodic_task = None
 
     async def periodic_reset():
         """Unconditionally reset focused tab's color every 500ms."""
         while True:
             await asyncio.sleep(0.5)
-            try:
-                app_now = await iterm2.async_get_app(connection)
-                window = app_now.current_terminal_window
-                if window and window.current_tab:
-                    await reset_tab_color(window.current_tab)
-            except Exception as e:
-                print(f"periodic_reset error: {e}")
+            app_now = await iterm2.async_get_app(connection)
+            window = app_now.current_terminal_window
+            if window and window.current_tab:
+                await reset_tab_color(window.current_tab)
 
-    asyncio.ensure_future(periodic_reset())
-    print("Periodic reset started")
+    try:
+        periodic_task = asyncio.ensure_future(periodic_reset())
+        log.info("Periodic reset started")
 
-    async with iterm2.FocusMonitor(connection) as monitor:
-        print("FocusMonitor started")
-        while True:
-            update = await monitor.async_get_next_update()
-            if update.selected_tab_changed:
-                tab_id = update.selected_tab_changed.tab_id
-                print(f"Tab switched: {tab_id}")
-                try:
+        async with iterm2.FocusMonitor(connection) as monitor:
+            log.info("FocusMonitor started")
+            while True:
+                update = await monitor.async_get_next_update()
+                if update.selected_tab_changed:
+                    tab_id = update.selected_tab_changed.tab_id
                     app_now = await iterm2.async_get_app(connection)
                     tab = app_now.get_tab_by_id(tab_id)
                     if tab:
                         await reset_tab_color(tab)
-                except Exception as e:
-                    print(f"focus_reset error: {e}")
+    finally:
+        if periodic_task:
+            periodic_task.cancel()
+            log.info("Periodic reset cancelled, will reconnect...")
 
 
 iterm2.run_forever(main, retry=True)

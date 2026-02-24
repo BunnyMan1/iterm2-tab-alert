@@ -5,7 +5,7 @@
 # ///
 
 """
-Add/update the bell trigger in iTerm2's default profile.
+Add/update the bell trigger in ALL iTerm2 profiles.
 Uses iTermInjectTrigger to set tab color red via escape codes on BEL.
 
 Run once. Restart iTerm2 afterward for changes to take effect.
@@ -16,7 +16,7 @@ from pathlib import Path
 
 PLIST_PATH = Path.home() / "Library" / "Preferences" / "com.googlecode.iterm2.plist"
 
-trigger = {
+TRIGGER = {
     "action": "iTermInjectTrigger",
     "regex": "\\a",
     "partial": True,
@@ -30,20 +30,25 @@ trigger = {
 with open(PLIST_PATH, "rb") as f:
     plist = plistlib.load(f)
 
-profile = plist["New Bookmarks"][0]
-triggers = profile.get("Triggers", [])
+profiles = plist.get("New Bookmarks", [])
+updated = 0
 
-# Remove any old bell triggers we created (both Inject and RPC variants)
-triggers = [
-    t for t in triggers
-    if not (t.get("regex") == "\\a" and t.get("action") in ("iTermInjectTrigger", "iTermRPCTrigger"))
-]
+for profile in profiles:
+    name = profile.get("Name", "unnamed")
+    triggers = profile.get("Triggers", [])
 
-triggers.append(trigger)
-profile["Triggers"] = triggers
+    # Remove any old bell triggers we created
+    triggers = [
+        t for t in triggers
+        if not (t.get("regex") == "\\a" and t.get("action") in ("iTermInjectTrigger", "iTermRPCTrigger"))
+    ]
+
+    triggers.append(TRIGGER)
+    profile["Triggers"] = triggers
+    updated += 1
 
 with open(PLIST_PATH, "wb") as f:
     plistlib.dump(plist, f)
 
-print("Trigger set to InjectTrigger (escape codes) successfully.")
+print(f"Trigger added to {updated} profiles.")
 print("Restart iTerm2 for changes to take effect.")
