@@ -100,18 +100,29 @@ The LaunchAgent sets `PYTHONUNBUFFERED=1`. If you modified the plist manually, e
 
 The BEL character propagates through Docker's PTY to iTerm2, so the trigger works for processes running inside containers. However, if you use **Claude Code hooks** (or similar notification hooks) inside a container, the hook subprocess may not have a controlling terminal — `printf '\a' > /dev/tty` will fail silently.
 
-**Fix:** Write BEL to all PTYs in the container:
+### Tiered PTY Strategy (Recommended)
+
+Walk the hook subprocess's ancestor process chain to find the nearest process with a PTY-connected stdout. This targets only the exact `docker exec` session that triggered the notification — other sessions' tabs stay unchanged.
+
+**Process chain:** `hook (sh -c) → Claude Code (bun) → zsh → docker exec`
+
+Claude Code's stdout is connected to the PTY (it's a TUI app). The hook subprocess has pipes (Claude Code captures its output), but walking up `$PPID`'s parent chain finds the PTY.
 
 ```bash
-for p in /dev/pts/[0-9]*; do printf '\a' > "$p" 2>/dev/null; done
+# Primary: walk ancestor chain to find PTY
+# Fallback: broadcast to all PTYs
+found=0; p=$PPID
+while [ "$p" -gt 1 ] 2>/dev/null; do
+  t=$(readlink /proc/$p/fd/1 2>/dev/null)
+  case "$t" in /dev/pts/*)
+    printf '\a' > "$t" 2>/dev/null; found=1; break;;
+  esac
+  p=$(awk '{print $4}' /proc/$p/stat 2>/dev/null) || break
+done
+[ "$found" = 0 ] && for q in /dev/pts/[0-9]*; do printf '\a' > "$q" 2>/dev/null; done
 ```
 
-This is necessary because:
-- Hook subprocesses have no controlling terminal (`/dev/tty` doesn't exist)
-- PID 1's PTY (`/dev/pts/0`) is from `docker run`, not the `docker exec -it` session running your CLI tool
-- Writing BEL to all PTYs is harmless — it just rings the bell on each
-
-Example Claude Code notification hook command for a container:
+Example Claude Code notification hook command (as a one-liner):
 
 ```json
 {
@@ -120,11 +131,19 @@ Example Claude Code notification hook command for a container:
       "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
       "hooks": [{
         "type": "command",
-        "command": "for p in /dev/pts/[0-9]*; do printf '\\a' > \"$p\" 2>/dev/null; done"
+        "command": "found=0; p=$PPID; while [ \"$p\" -gt 1 ] 2>/dev/null; do t=$(readlink /proc/$p/fd/1 2>/dev/null); case \"$t\" in /dev/pts/*) printf '\\a' > \"$t\" 2>/dev/null; found=1; break;; esac; p=$(awk '{print $4}' /proc/$p/stat 2>/dev/null) || break; done; [ \"$found\" = 0 ] && for q in /dev/pts/[0-9]*; do printf '\\a' > \"$q\" 2>/dev/null; done"
       }]
     }]
   }
 }
+```
+
+### Simple Broadcast (Alternative)
+
+If the ancestor walk doesn't work for your setup (e.g., non-Linux containers without `/proc`), broadcast BEL to all PTYs. This is simpler but turns every session's tab red, not just the one that needs attention.
+
+```bash
+for p in /dev/pts/[0-9]*; do printf '\a' > "$p" 2>/dev/null; done
 ```
 
 ## How it's built
